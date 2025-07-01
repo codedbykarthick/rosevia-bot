@@ -1,33 +1,15 @@
-const {
-  Client,
-  GatewayIntentBits,
-  Partials,
-  ChannelType,
-  PermissionsBitField,
-  EmbedBuilder,
-  ActionRowBuilder,
-  StringSelectMenuBuilder,
-  StringSelectMenuOptionBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  Events
-} = require('discord.js');
-
 require('dotenv').config();
+const { Client, GatewayIntentBits, Partials, ChannelType, PermissionsBitField, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
+const express = require('express');
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers,
-  ],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildMembers],
   partials: [Partials.Message, Partials.Channel, Partials.GuildMember],
 });
 
-const TICKET_CATEGORY_ID = '1389516515971170395'; // ✅ your ticket category ID
-const ADMIN_ROLE_ID = '1389516588205735996';      // ✅ your admin role ID
-
+// Constants
+const TICKET_CATEGORY_ID = '1389516515971170395'; // replace with your category ID
+const ADMIN_ROLE_ID = '1389516588205735996';      // replace with your admin role ID
 const RAZORPAY_LINKS = {
   embed: 'https://rzp.io/l/embed',
   logo: 'https://rzp.io/l/logo',
@@ -36,111 +18,117 @@ const RAZORPAY_LINKS = {
   bot: 'https://rzp.io/l/botsetup',
 };
 
-// ✅ Bot Ready
+// Store active ticket mapping
+const activeTickets = new Map();
+
+// Bot ready
 client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
-// ✅ Send embed with dropdown menu
-client.on('messageCreate', async (message) => {
-  if (message.content === '!send-tickets' && message.member.permissions.has('Administrator')) {
-    const embed = new EmbedBuilder()
-      .setTitle('🎟️ Open a Ticket')
-      .setDescription('Select the service you want from the dropdown below.')
-      .setColor('#FF66B2');
-
-    const menu = new StringSelectMenuBuilder()
-      .setCustomId('select_service')
-      .setPlaceholder('📂 Choose a Service')
-      .addOptions(
-        new StringSelectMenuOptionBuilder().setLabel('🎨 Purchase Embed').setValue('embed'),
-        new StringSelectMenuOptionBuilder().setLabel('🖼️ Purchase Logo').setValue('logo'),
-        new StringSelectMenuOptionBuilder().setLabel('🛠️ Server Setup').setValue('setup'),
-        new StringSelectMenuOptionBuilder().setLabel('🎭 Role Setup').setValue('roles'),
-        new StringSelectMenuOptionBuilder().setLabel('🤖 Bot Setup').setValue('bot'),
-      );
-
-    const row = new ActionRowBuilder().addComponents(menu);
-
-    await message.channel.send({ embeds: [embed], components: [row] });
-  }
-});
-
-// ✅ Handle dropdown selection
-client.on(Events.InteractionCreate, async (interaction) => {
+// Handle dropdown menu interaction
+client.on('interactionCreate', async (interaction) => {
   if (!interaction.isStringSelectMenu()) return;
-  if (interaction.customId !== 'select_service') return;
 
+  const product = interaction.values[0]; // selected item
   const userId = interaction.user.id;
   const guild = interaction.guild;
-  const product = interaction.values[0];
 
   const channelName = `ticket-${interaction.user.username}`;
-  const existing = guild.channels.cache.find(c => c.name === channelName);
-  if (existing) {
-    return interaction.reply({
-      content: '🛑 You already have an open ticket.',
-      ephemeral: true
-    });
+  if (guild.channels.cache.find(c => c.name === channelName)) {
+    return interaction.reply({ content: '🛑 You already have an open ticket.', ephemeral: true });
   }
 
-  const ticketChannel = await guild.channels.create({
+  const channel = await guild.channels.create({
     name: channelName,
     type: ChannelType.GuildText,
     parent: TICKET_CATEGORY_ID,
-    topic: `<@${userId}>`, // Store user mention for later
     permissionOverwrites: [
       { id: guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
       { id: userId, allow: [PermissionsBitField.Flags.ViewChannel], deny: [PermissionsBitField.Flags.SendMessages] },
-      { id: ADMIN_ROLE_ID, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
+      { id: ADMIN_ROLE_ID, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
     ],
   });
 
-  const payRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setLabel('💳 Pay Now')
-      .setStyle(ButtonStyle.Link)
-      .setURL(RAZORPAY_LINKS[product])
+  // Save ticket info for webhook unlock
+  activeTickets.set(userId, channel.id);
+
+  const row = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('paid')
+      .setPlaceholder('💳 Pay Now')
+      .addOptions([
+        {
+          label: 'Click here to pay',
+          value: 'pay',
+          description: 'Make payment via Razorpay',
+          emoji: '💳',
+          default: true,
+        }
+      ])
   );
 
-  await ticketChannel.send({
-    content: `👋 Hi <@${userId}>! Thanks for choosing **${product}**.\nPlease complete your payment using the button below.`,
-    components: [payRow]
+  await channel.send({
+    content: `👋 Hello <@${userId}>! You selected **${product}**.\n💳 Please complete your payment here: ${RAZORPAY_LINKS[product]}\nOnce verified, your channel will be unlocked.`,
   });
 
-  await interaction.reply({
-    content: `✅ Ticket created: ${ticketChannel}`,
-    ephemeral: true
-  });
-
-  // Auto-close after 12 hours
-  setTimeout(async () => {
-    await ticketChannel.send(`🔒 This ticket has been automatically closed after 12 hours.`);
-    await ticketChannel.permissionOverwrites.edit(userId, { ViewChannel: true, SendMessages: false });
-  }, 12 * 60 * 60 * 1000);
+  await interaction.reply({ content: `✅ Ticket created: ${channel}`, ephemeral: true });
 });
 
-// ✅ Unlock command (to allow user to send messages)
-client.on('messageCreate', async (message) => {
-  if (message.content === '!unlock' && message.member.roles.cache.has(ADMIN_ROLE_ID)) {
-    const topic = message.channel.topic;
-    const userId = topic?.match(/<@(\d+)>/)?.[1];
+// Command to send the dropdown menu
+client.on('messageCreate', async (msg) => {
+  if (msg.content === '!send-tickets' && msg.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId('product_select')
+      .setPlaceholder('📦 Choose a product')
+      .addOptions(
+        new StringSelectMenuOptionBuilder().setLabel('🎨 Embed').setValue('embed'),
+        new StringSelectMenuOptionBuilder().setLabel('🖼️ Logo').setValue('logo'),
+        new StringSelectMenuOptionBuilder().setLabel('🛠️ Setup').setValue('setup'),
+        new StringSelectMenuOptionBuilder().setLabel('🎭 Roles').setValue('roles'),
+        new StringSelectMenuOptionBuilder().setLabel('🤖 Bot Setup').setValue('bot')
+      );
 
-    if (!userId) {
-      return message.reply('❌ No user found in this channel topic.');
-    }
-
-    await message.channel.permissionOverwrites.edit(userId, {
-      SendMessages: true
-    });
-
-    await message.channel.send(`✅ <@${userId}>, your access has been unlocked. You can now chat.`);
+    const row = new ActionRowBuilder().addComponents(menu);
+    await msg.channel.send({ content: '📩 Select a service to open a ticket:', components: [row] });
   }
 });
 
-// 🔧 Error handler
-process.on('unhandledRejection', error => {
-  console.error('❌ Unhandled Rejection:', error);
+client.login(process.env.TOKEN);
+
+
+// ---------- EXPRESS SERVER FOR RAILWAY + WEBHOOK ----------
+const app = express();
+app.use(express.json());
+
+app.get('/', (req, res) => {
+  res.send('✅ Rosevia Bot is live.');
 });
 
-client.login(process.env.TOKEN);
+// Unlock endpoint (triggered from Make.com)
+app.post('/unlock', async (req, res) => {
+  const { discord_user_id } = req.body;
+  if (!discord_user_id || !activeTickets.has(discord_user_id)) {
+    return res.status(400).send('Invalid user ID or ticket not found.');
+  }
+
+  const channelId = activeTickets.get(discord_user_id);
+  const guild = client.guilds.cache.first();
+  const channel = guild.channels.cache.get(channelId);
+
+  if (!channel) return res.status(404).send('Channel not found.');
+
+  await channel.permissionOverwrites.edit(discord_user_id, {
+    SendMessages: true,
+    ViewChannel: true
+  });
+
+  await channel.send(`✅ Payment confirmed. <@${discord_user_id}> you can now chat here. Thank you!`);
+  activeTickets.delete(discord_user_id);
+  res.send('Channel unlocked successfully.');
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🌐 Express server is running on port ${PORT}`);
+});
