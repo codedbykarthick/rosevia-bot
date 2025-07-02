@@ -13,7 +13,6 @@ const {
 } = require('discord.js');
 require('dotenv').config();
 
-// Initialize Client
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -30,6 +29,7 @@ const ADMIN_ROLE_ID = '1389516588205735996';
 const VERIFIED_ROLE_ID = '1389515783079596152';
 const CASH_EMOJI = { id: '1389922470168887306', name: 'Cashapp' };
 const VERIFY_BANNER = 'https://cdn.discordapp.com/attachments/1389920703259873290/1389936835509092362/1e4f6407d33a14f96346be21ffb8b519.jpg';
+const WELCOME_CHANNEL_ID = '1389943672048451665'; // 🔁 Replace with your actual welcome channel ID
 
 // Bot Ready
 client.once('ready', () => {
@@ -85,6 +85,25 @@ client.on('messageCreate', async (msg) => {
 
     const row = new ActionRowBuilder().addComponents(verifyBtn);
     await msg.channel.send({ embeds: [embed], components: [row] });
+  }
+
+  // Test Welcome Command
+  if (msg.content === '!testwelcome' && msg.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+    const embed = new EmbedBuilder()
+      .setColor('#00ff99')
+      .setTitle('👋 Welcome to Rosevia!')
+      .setDescription(
+        `Hey <@${msg.author.id}>! Here's a preview of our welcome message.\n\n` +
+        '• ✅ Get Verified\n' +
+        '• 💼 Open a Ticket\n' +
+        '• 📜 Follow the Rules\n\n' +
+        'You’re all set!'
+      )
+      .setThumbnail(msg.author.displayAvatarURL({ dynamic: true }))
+      .setFooter({ text: 'Rosevia Storefront' })
+      .setTimestamp();
+
+    await msg.channel.send({ embeds: [embed] });
   }
 });
 
@@ -168,7 +187,30 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-// Web server for Cyclic hosting
+// Welcome Message Handler
+client.on('guildMemberAdd', async (member) => {
+  const channel = member.guild.channels.cache.get(WELCOME_CHANNEL_ID);
+  if (!channel) return;
+
+  const welcomeEmbed = new EmbedBuilder()
+    .setColor('#00ff99')
+    .setTitle('👋 Welcome to Rosevia!')
+    .setDescription(
+      `Hey <@${member.id}>! We're excited to have you here.\n\n` +
+      'Make sure to:\n' +
+      '• ✅ Get Verified using `!verify`\n' +
+      '• 💼 Open a ticket with `!ticket`\n' +
+      '• 📜 Follow all server rules\n\n' +
+      'Enjoy your stay!'
+    )
+    .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+    .setFooter({ text: 'Rosevia Storefront' })
+    .setTimestamp();
+
+  await channel.send({ embeds: [welcomeEmbed] });
+});
+
+// Web Server for Cyclic
 const express = require('express');
 const app = express();
 app.get('/', (req, res) => res.send('✅ Rosevia Bot is running on Cyclic'));
