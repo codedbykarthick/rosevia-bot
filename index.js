@@ -1,6 +1,16 @@
 // Required dependencies
 const express = require('express');
-const { Client, GatewayIntentBits, Partials, ChannelType, PermissionsBitField, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
+const {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  ChannelType,
+  PermissionsBitField,
+  ActionRowBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+  EmbedBuilder
+} = require('discord.js');
 require('dotenv').config();
 
 // Discord Client
@@ -10,8 +20,8 @@ const client = new Client({
 });
 
 // Constants
-const TICKET_CATEGORY_ID = '1389516515971170395'; // replace with your ticket category ID
-const ADMIN_ROLE_ID = '1389516588205735996';      // replace with your admin role ID
+const TICKET_CATEGORY_ID = '1389516515971170395';
+const ADMIN_ROLE_ID = '1389516588205735996';
 const RAZORPAY_LINKS = {
   embed: 'https://rzp.io/l/embed',
   logo: 'https://rzp.io/l/logo',
@@ -20,7 +30,7 @@ const RAZORPAY_LINKS = {
   bot: 'https://rzp.io/l/botsetup',
 };
 
-// Map to store open tickets
+// Active ticket tracker
 const activeTickets = new Map();
 
 // Bot Ready
@@ -28,7 +38,7 @@ client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
-// Dropdown Menu Handler
+// Dropdown Handler
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isStringSelectMenu()) return;
 
@@ -55,22 +65,33 @@ client.on('interactionCreate', async (interaction) => {
 
   activeTickets.set(userId, ticketChannel.id);
 
-  await ticketChannel.send({
-    content: `👋 Hello <@${userId}>! You selected **${product}**.\n💳 Please pay here: ${RAZORPAY_LINKS[product]}\nOnce payment is confirmed, this channel will be unlocked.`,
-  });
+  const embed = new EmbedBuilder()
+    .setTitle(`🎟️ New Ticket: ${product.toUpperCase()}`)
+    .setDescription(`Hello <@${userId}> 👋\n\nYou selected **${product}**.\n\n💳 Please complete payment using the link below:`)
+    .addFields({ name: '🔗 Payment Link', value: `[Click to Pay](${RAZORPAY_LINKS[product]})` })
+    .setColor('#00BFFF')
+    .setFooter({ text: 'Rosevia Services • Ticket System', iconURL: client.user.displayAvatarURL() })
+    .setTimestamp();
 
+  await ticketChannel.send({ embeds: [embed] });
   await interaction.reply({ content: `✅ Ticket created: ${ticketChannel}`, ephemeral: true });
 
   // Auto-close after 12 hrs
   setTimeout(async () => {
     if (ticketChannel) {
-      await ticketChannel.send('🔒 This ticket is now closed due to inactivity.');
+      const closeEmbed = new EmbedBuilder()
+        .setTitle('🔒 Ticket Closed')
+        .setDescription('This ticket has been closed due to **12 hours of inactivity**.\nIf you still need help, please create a new ticket.')
+        .setColor('#FF4500')
+        .setTimestamp();
+
+      await ticketChannel.send({ embeds: [closeEmbed] });
       await ticketChannel.permissionOverwrites.edit(userId, { ViewChannel: false });
     }
   }, 12 * 60 * 60 * 1000);
 });
 
-// Command to send dropdown menu
+// Send Dropdown
 client.on('messageCreate', async (msg) => {
   if (msg.content === '!send-tickets' && msg.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
     const menu = new StringSelectMenuBuilder()
@@ -89,20 +110,15 @@ client.on('messageCreate', async (msg) => {
   }
 });
 
-client.login(process.env.TOKEN);
-
-
-
-// ---------------- EXPRESS SERVER ----------------
+// Express Server
 const app = express();
 app.use(express.json());
 
-// Check if bot is running
 app.get('/', (req, res) => {
   res.send('🟢 Rosevia Bot is running!');
 });
 
-// Unlock channel via Make.com/Razorpay
+// Unlock via Make.com webhook
 app.post('/unlock', async (req, res) => {
   const { userId } = req.body;
 
@@ -122,7 +138,13 @@ app.post('/unlock', async (req, res) => {
       ViewChannel: true
     });
 
-    await channel.send(`<@${userId}> ✅ Your payment is confirmed. You may now chat here.`);
+    const confirmEmbed = new EmbedBuilder()
+      .setTitle('✅ Payment Confirmed')
+      .setDescription(`Welcome <@${userId}>!\n\nYour payment has been successfully verified.\nYou may now chat here with our team.`)
+      .setColor('#32CD32')
+      .setTimestamp();
+
+    await channel.send({ embeds: [confirmEmbed] });
     activeTickets.delete(userId);
     return res.status(200).send('✅ Channel unlocked.');
   } catch (err) {
@@ -131,8 +153,10 @@ app.post('/unlock', async (req, res) => {
   }
 });
 
-// Start Express Server
+// Start Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🌐 Express running on port ${PORT}`);
 });
+
+client.login(process.env.TOKEN);
