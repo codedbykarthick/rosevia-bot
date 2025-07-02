@@ -1,162 +1,170 @@
-// Required dependencies
-const express = require('express');
 const {
   Client,
   GatewayIntentBits,
   Partials,
-  ChannelType,
   PermissionsBitField,
+  ChannelType,
   ActionRowBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
-  EmbedBuilder
+  EmbedBuilder,
+  ButtonBuilder,
+  ButtonStyle
 } = require('discord.js');
 require('dotenv').config();
 
-// Discord Client
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildMembers],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers
+  ],
   partials: [Partials.Message, Partials.Channel, Partials.GuildMember],
 });
 
 // Constants
-const TICKET_CATEGORY_ID = '1389516515971170395';
+const CATEGORY_ID = '1389516515971170395';
 const ADMIN_ROLE_ID = '1389516588205735996';
-const RAZORPAY_LINKS = {
-  embed: 'https://rzp.io/l/embed',
-  logo: 'https://rzp.io/l/logo',
-  setup: 'https://rzp.io/l/setup',
-  roles: 'https://rzp.io/l/roles',
-  bot: 'https://rzp.io/l/botsetup',
-};
-
-// Active ticket tracker
-const activeTickets = new Map();
+const CASH_EMOJI = { id: '1389922470168887306', name: 'Cashapp' };
+const BANNER_IMAGE = 'https://cdn.discordapp.com/attachments/1389920703259873290/1389921008840081408/668fbc560f8ed6375b9f5f92aa59d3cd.gif';
 
 // Bot Ready
 client.once('ready', () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
+  console.log(`✅ Bot online as ${client.user.tag}`);
+});
+
+// Ticket Panel Command
+client.on('messageCreate', async (msg) => {
+  if (msg.content === '!ticket' && msg.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+    const embed = new EmbedBuilder()
+      .setTitle('🛍️ Rosevia Service Center')
+      .setDescription(
+        'Welcome to the Rosevia Storefront! Select a service below to open a ticket.\n\n' +
+        '**By opening a ticket, you agree to our TOS:**\n' +
+        '• No refunds after delivery\n' +
+        '• 1 free revision\n' +
+        '• Chargebacks = ban\n' +
+        '• Ticket closure = service accepted'
+      )
+      .setImage(BANNER_IMAGE)
+      .setColor('#2B2D31');
+
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId('ticket_type')
+      .setPlaceholder('Choose a service')
+      .addOptions(
+        new StringSelectMenuOptionBuilder()
+          .setLabel('Embed')
+          .setValue('embed')
+          .setDescription('To purchase a custom embed, click here.')
+          .setEmoji(CASH_EMOJI),
+        new StringSelectMenuOptionBuilder()
+          .setLabel('Logo')
+          .setValue('logo')
+          .setDescription('To purchase a logo, click here.')
+          .setEmoji(CASH_EMOJI),
+        new StringSelectMenuOptionBuilder()
+          .setLabel('Server Setup')
+          .setValue('setup')
+          .setDescription('To purchase a full server setup, click here.')
+          .setEmoji(CASH_EMOJI)
+      );
+
+    const row = new ActionRowBuilder().addComponents(menu);
+    await msg.channel.send({ embeds: [embed], components: [row] });
+  }
 });
 
 // Dropdown Handler
 client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isStringSelectMenu()) return;
+  if (interaction.isStringSelectMenu()) {
+    const type = interaction.values[0];
+    const user = interaction.user;
+    const guild = interaction.guild;
 
-  const product = interaction.values[0];
-  const userId = interaction.user.id;
-  const guild = interaction.guild;
-  const username = interaction.user.username;
+    // Check if user already has an open ticket
+    const existing = guild.channels.cache.find(
+      c =>
+        c.parentId === CATEGORY_ID &&
+        c.permissionOverwrites.cache.has(user.id) &&
+        c.permissionOverwrites.cache.get(user.id).allow.has(PermissionsBitField.Flags.ViewChannel)
+    );
 
-  const channelName = `ticket-${username}`;
-  if (guild.channels.cache.find(c => c.name === channelName)) {
-    return interaction.reply({ content: '🛑 You already have an open ticket.', ephemeral: true });
-  }
+    if (existing) {
+      const alreadyEmbed = new EmbedBuilder()
+        .setTitle('Ticket Already Open')
+        .setDescription('You already have an active ticket. Please close it before opening another.')
+        .setColor('Red');
 
-  const ticketChannel = await guild.channels.create({
-    name: channelName,
-    type: ChannelType.GuildText,
-    parent: TICKET_CATEGORY_ID,
-    permissionOverwrites: [
-      { id: guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
-      { id: userId, allow: [PermissionsBitField.Flags.ViewChannel], deny: [PermissionsBitField.Flags.SendMessages] },
-      { id: ADMIN_ROLE_ID, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
-    ]
-  });
-
-  activeTickets.set(userId, ticketChannel.id);
-
-  const embed = new EmbedBuilder()
-    .setTitle(`🎟️ New Ticket: ${product.toUpperCase()}`)
-    .setDescription(`Hello <@${userId}> 👋\n\nYou selected **${product}**.\n\n💳 Please complete payment using the link below:`)
-    .addFields({ name: '🔗 Payment Link', value: `[Click to Pay](${RAZORPAY_LINKS[product]})` })
-    .setColor('#00BFFF')
-    .setFooter({ text: 'Rosevia Services • Ticket System', iconURL: client.user.displayAvatarURL() })
-    .setTimestamp();
-
-  await ticketChannel.send({ embeds: [embed] });
-  await interaction.reply({ content: `✅ Ticket created: ${ticketChannel}`, ephemeral: true });
-
-  // Auto-close after 12 hrs
-  setTimeout(async () => {
-    if (ticketChannel) {
-      const closeEmbed = new EmbedBuilder()
-        .setTitle('🔒 Ticket Closed')
-        .setDescription('This ticket has been closed due to **12 hours of inactivity**.\nIf you still need help, please create a new ticket.')
-        .setColor('#FF4500')
-        .setTimestamp();
-
-      await ticketChannel.send({ embeds: [closeEmbed] });
-      await ticketChannel.permissionOverwrites.edit(userId, { ViewChannel: false });
-    }
-  }, 12 * 60 * 60 * 1000);
-});
-
-// Send Dropdown
-client.on('messageCreate', async (msg) => {
-  if (msg.content === '!send-tickets' && msg.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-    const menu = new StringSelectMenuBuilder()
-      .setCustomId('product_select')
-      .setPlaceholder('📦 Select a service')
-      .addOptions(
-        new StringSelectMenuOptionBuilder().setLabel('🎨 Embed').setValue('embed'),
-        new StringSelectMenuOptionBuilder().setLabel('🖼️ Logo').setValue('logo'),
-        new StringSelectMenuOptionBuilder().setLabel('🛠️ Setup').setValue('setup'),
-        new StringSelectMenuOptionBuilder().setLabel('🎭 Roles').setValue('roles'),
-        new StringSelectMenuOptionBuilder().setLabel('🤖 Bot Setup').setValue('bot')
+      const redirectRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel('Go to Ticket')
+          .setStyle(ButtonStyle.Link)
+          .setURL(`https://discord.com/channels/${guild.id}/${existing.id}`)
       );
 
-    const row = new ActionRowBuilder().addComponents(menu);
-    await msg.channel.send({ content: '📩 Choose a service to open a ticket:', components: [row] });
-  }
-});
+      return interaction.reply({ embeds: [alreadyEmbed], components: [redirectRow], flags: 64 });
+    }
 
-// Express Server
-const app = express();
-app.use(express.json());
+    // Create new ticket
+    const username = user.username.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 15);
+    const ticketName = `${type}-${username}`;
 
-app.get('/', (req, res) => {
-  res.send('🟢 Rosevia Bot is running!');
-});
-
-// Unlock via Make.com webhook
-app.post('/unlock', async (req, res) => {
-  const { userId } = req.body;
-
-  if (!userId || !activeTickets.has(userId)) {
-    return res.status(400).send('Invalid user ID or no ticket found.');
-  }
-
-  try {
-    const guild = client.guilds.cache.first();
-    const channelId = activeTickets.get(userId);
-    const channel = guild.channels.cache.get(channelId);
-
-    if (!channel) return res.status(404).send('Ticket channel not found.');
-
-    await channel.permissionOverwrites.edit(userId, {
-      SendMessages: true,
-      ViewChannel: true
+    const channel = await guild.channels.create({
+      name: ticketName,
+      type: ChannelType.GuildText,
+      parent: CATEGORY_ID,
+      permissionOverwrites: [
+        { id: guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
+        { id: user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
+        { id: ADMIN_ROLE_ID, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
+      ]
     });
 
-    const confirmEmbed = new EmbedBuilder()
-      .setTitle('✅ Payment Confirmed')
-      .setDescription(`Welcome <@${userId}>!\n\nYour payment has been successfully verified.\nYou may now chat here with our team.`)
-      .setColor('#32CD32')
+    const closeRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('close_ticket')
+        .setLabel('🔒 Close Ticket')
+        .setStyle(ButtonStyle.Danger)
+    );
+
+    const ticketEmbed = new EmbedBuilder()
+      .setTitle('🎫 Ticket Opened')
+      .setDescription(`Hello <@${user.id}>, thank you for selecting **${type}** service.\nPlease describe your request below.`)
+      .setColor('#5865F2')
       .setTimestamp();
 
-    await channel.send({ embeds: [confirmEmbed] });
-    activeTickets.delete(userId);
-    return res.status(200).send('✅ Channel unlocked.');
-  } catch (err) {
-    console.error('❌ Unlock Error:', err);
-    res.status(500).send('Server error unlocking channel.');
-  }
-});
+    await channel.send({ content: `<@${user.id}>`, embeds: [ticketEmbed], components: [closeRow] });
 
-// Start Server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🌐 Express running on port ${PORT}`);
+    const createdEmbed = new EmbedBuilder()
+      .setTitle('✅ Ticket Created')
+      .setDescription('Your ticket has been successfully created.')
+      .setColor('Green');
+
+    const jumpButton = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setLabel('Go to Ticket')
+        .setStyle(ButtonStyle.Link)
+        .setURL(`https://discord.com/channels/${guild.id}/${channel.id}`)
+    );
+
+    return interaction.reply({ embeds: [createdEmbed], components: [jumpButton], flags: 64 });
+  }
+
+  // Close Ticket Handler
+  if (interaction.isButton() && interaction.customId === 'close_ticket') {
+    await interaction.reply({ content: '🔒 Closing ticket in 5 seconds...', flags: 64 });
+    setTimeout(() => {
+      interaction.channel.delete().catch(console.error);
+    }, 5000);
+  }
 });
 
 client.login(process.env.TOKEN);
+
+// Web server for Cyclic.sh to stay alive
+const express = require('express');
+const app = express();
+app.get('/', (req, res) => res.send('Rosevia Bot is running on Cyclic'));
+app.listen(3000, () => console.log('🌐 Express server ready on port 3000'));
